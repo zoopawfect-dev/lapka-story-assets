@@ -201,7 +201,28 @@ async function publishPost(fileUrl, caption) {
   return publishMedia(container.id);
 }
 
+async function checkUrlsReachable(urls) {
+  const failed = [];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { method: "HEAD" });
+      if (!res.ok) failed.push(`${url} → HTTP ${res.status}`);
+    } catch (err) {
+      failed.push(`${url} → ${err.message}`);
+    }
+  }
+  return failed;
+}
+
 async function publishCarousel(fileUrls, caption) {
+  // Pre-check: verify all URLs are reachable before creating any containers
+  const unreachable = await checkUrlsReachable(fileUrls);
+  if (unreachable.length > 0) {
+    throw new Error(
+      `Carousel pre-check failed (${unreachable.length}/${fileUrls.length} files):\n    ${unreachable.join("\n    ")}`
+    );
+  }
+
   const childIds = [];
   for (const url of fileUrls) {
     const isVideo =
@@ -234,12 +255,15 @@ async function publishCarousel(fileUrls, caption) {
   return publishMedia(carousel.id);
 }
 
-async function publishReel(videoUrl, caption) {
-  const container = await igApi(`/${IG_USER_ID}/media`, "POST", {
+async function publishReel(videoUrl, caption, coverUrl) {
+  const params = {
     media_type: "REELS",
     video_url: videoUrl,
     caption: caption,
-  });
+  };
+  if (coverUrl) params.cover_url = coverUrl;
+
+  const container = await igApi(`/${IG_USER_ID}/media`, "POST", params);
   if (container.error)
     throw new Error(`Container: ${JSON.stringify(container.error)}`);
 
@@ -356,7 +380,14 @@ async function processFeed() {
     const name = extractText(props["Назва / тема посту"]) || page.id;
     const time = extractText(props["Час публікації"]);
     const format = extractSelect(props["Обраний формат"]);
-    const caption = extractText(props["Концепт / сценарій"]);
+    // Caption: prefer "Текст поста", fallback to "Концепт / сценарій"
+    const captionText =
+      extractText(props["Текст поста"]) ||
+      extractText(props["Концепт / сценарій"]);
+    // Hashtags: dedicated field (comment) — fallback to regex extraction
+    const hashtagsField = extractText(props["Хештеги"]);
+    // Cover URL for Reels
+    const coverUrl = extractUrl(props["Обкладинка Reel"]);
     const filesRaw = extractText(props["Файли GitHub"]);
 
     // Filter: time must be set and <= current time
@@ -402,17 +433,21 @@ async function processFeed() {
       const isCarousel =
         (format === "Карусель" || fileUrls.length > 1) && !isReel;
 
-      // Extract hashtags from caption — publish them as first comment
-      let cleanCaption = caption;
-      let hashtags = null;
-      const hashMatch = caption.match(/((?:#[^\s#]+[\s]*){3,})$/);
-      if (hashMatch) {
-        hashtags = hashMatch[1].trim();
-        cleanCaption = caption.slice(0, hashMatch.index).trim();
+      // Caption + hashtags split
+      let cleanCaption = captionText;
+      let hashtags = hashtagsField || null;
+      if (!hashtags) {
+        // Fallback: extract trailing hashtags from caption
+        const hashMatch = captionText.match(/((?:#[^\s#]+[\s]*){3,})$/);
+        if (hashMatch) {
+          hashtags = hashMatch[1].trim();
+          cleanCaption = captionText.slice(0, hashMatch.index).trim();
+        }
       }
 
       if (isReel) {
-        mediaId = await publishReel(fileUrls[0], cleanCaption);
+        mediaId = await publishReel(fileUrls[0], cleanCaption, coverUrl);
+        if (coverUrl) log(`  🖼️ With cover: ${coverUrl}`);
       } else if (isCarousel) {
         mediaId = await publishCarousel(fileUrls, cleanCaption);
       } else {
