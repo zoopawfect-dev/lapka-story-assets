@@ -9,24 +9,26 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # 26.08.2026: було 5 хв — job вбивався ще на checkout (репо ~3,9 GB PNG),
-    # прогони 25.08 20:43 і 26.08 14:42 померли з "exceeded the maximum execution time".
     timeout-minutes: 10
     steps:
-      # ⚠️ Тільки tools/ і без вмісту блобів: репо асетів важить ~3,9 GB,
-      # повний checkout з'їдав 2-3 хв з таймауту і робив кожен тік лотереєю.
-      # Скрипту потрібен рівно один файл — tools/auto-publish.mjs.
-      - uses: actions/checkout@v4
-        with:
-          filter: blob:none
-          sparse-checkout: tools
-
+      # ⚠️ БЕЗ actions/checkout. Це репо ~3,9 GB (усі PNG сторіз + історія),
+      # і git fetch тут не вкладається навіть у 10 хв — 26.08.2026 прогони
+      # вмирали з "exceeded the maximum execution time" ще до старту скрипта,
+      # і sparse-checkout + filter:blob:none проблему НЕ вирішили.
+      # Джобі потрібен рівно один файл, тож тягнемо його по HTTP (репо публічне).
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      - name: Fetch publisher script
+        run: |
+          curl -sSfL --retry 3 \
+            -o auto-publish.mjs \
+            "https://raw.githubusercontent.com/zoopawfect-dev/lapka-story-assets/main/tools/auto-publish.mjs"
+          node --check auto-publish.mjs
+
       - name: Run auto-publisher
-        run: node tools/auto-publish.mjs
+        run: node auto-publish.mjs
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
