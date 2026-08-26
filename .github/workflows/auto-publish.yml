@@ -9,9 +9,17 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 26.08.2026: було 5 хв — job вбивався ще на checkout (репо ~3,9 GB PNG),
+    # прогони 25.08 20:43 і 26.08 14:42 померли з "exceeded the maximum execution time".
+    timeout-minutes: 10
     steps:
+      # ⚠️ Тільки tools/ і без вмісту блобів: репо асетів важить ~3,9 GB,
+      # повний checkout з'їдав 2-3 хв з таймауту і робив кожен тік лотереєю.
+      # Скрипту потрібен рівно один файл — tools/auto-publish.mjs.
       - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: tools
 
       - uses: actions/setup-node@v4
         with:
